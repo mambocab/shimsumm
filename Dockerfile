@@ -18,4 +18,4 @@ RUN mkdir -p /opt/bats && \
 WORKDIR /app
 COPY --from=builder /app/bin/shimsumm /app/bin/shimsumm
 COPY tests/ /app/tests/
-CMD ["sh", "-c", "set -e; bats /app/tests/shimsumm-wrap.bats /app/tests/shimsumm-test.bats /app/tests/shimsumm.bats /app/tests/shimsumm-init-shim.bats /app/tests/shimsumm-doctor.bats; /app/tests/shells/bash-integration.bash; /app/tests/shells/zsh-integration.zsh; /app/tests/shells/fish-integration.fish"]
+CMD ["sh", "-c", "set -e; bats /app/tests/shimsumm-wrap.bats /app/tests/shimsumm-test.bats /app/tests/shimsumm.bats /app/tests/shimsumm-init-shim.bats /app/tests/shimsumm-doctor.bats /app/tests/shimsumm-new-filter.bats; /app/tests/shells/bash-integration.bash; /app/tests/shells/zsh-integration.zsh; /app/tests/shells/fish-integration.fish"]
