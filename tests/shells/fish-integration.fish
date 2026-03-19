@@ -96,7 +96,7 @@ set REAL "$TMP/real"
 mkdir -p "$REAL"
 printf '#!/bin/sh\nprintf "KEEP this\nDROP this\n"\n' > "$REAL/mytool"
 chmod +x "$REAL/mytool"
-printf '#!/bin/sh\neval "$(shimsumm wrap)"\nsmsm_filter() { grep KEEP || true; }\nsmsm_wrap "$@"\n' \
+printf '#!/bin/sh\neval "$(shimsumm emit-wrap)"\nsmsm_filter() { grep KEEP || true; }\nsmsm_wrap "$@"\n' \
   > "$XDG/shimsumm/filters/mytool"
 chmod +x "$XDG/shimsumm/filters/mytool"
 

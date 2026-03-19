@@ -11,7 +11,7 @@ setup() {
   # Filter script: keeps only lines matching KEEP
   cat > "$FILTERS_DIR/mytool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_filter() { grep KEEP || true; }
 smsm_wrap "$@"
 EOF
@@ -52,7 +52,7 @@ teardown() {
 
 @test "shimsumm-test exits 1 when no fixtures found for tool" {
   # Create filter with no fixtures
-  printf '#!/bin/sh\neval "$(shimsumm wrap)"\nsmsm_wrap "$@"\n' \
+  printf '#!/bin/sh\neval "$(shimsumm emit-wrap)"\nsmsm_wrap "$@"\n' \
     > "$XDG_CONFIG_HOME/shimsumm/filters/mytool_nofixtures"
   chmod +x "$XDG_CONFIG_HOME/shimsumm/filters/mytool_nofixtures"
   run shimsumm test mytool_nofixtures
@@ -64,7 +64,7 @@ teardown() {
   # Second filter with matching fixtures
   cat > "$XDG_CONFIG_HOME/shimsumm/filters/othertool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_wrap "$@"
 EOF
   chmod +x "$XDG_CONFIG_HOME/shimsumm/filters/othertool"

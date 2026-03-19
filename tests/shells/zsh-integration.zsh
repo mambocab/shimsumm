@@ -89,7 +89,7 @@ SH
 chmod +x "$REAL/mytool"
 cat > "$XDG/shimsumm/filters/mytool" <<SH
 #!/bin/sh
-eval "\$(shimsumm wrap)"
+eval "\$(shimsumm emit-wrap)"
 smsm_filter() { grep KEEP || true; }
 smsm_wrap "\$@"
 SH

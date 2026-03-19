@@ -11,7 +11,7 @@ setup() {
   # Default passthrough filter script
   cat > "$FILTERS_DIR/mytool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_wrap "$@"
 EOF
   chmod +x "$FILTERS_DIR/mytool"
@@ -46,7 +46,7 @@ teardown() {
 @test "smsm_wrap pipes output through smsm_filter when defined" {
   cat > "$FILTERS_DIR/mytool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_filter() { grep KEEP; }
 smsm_wrap "$@"
 EOF
@@ -65,7 +65,7 @@ EOF
 @test "smsm_wrap saves full output to temp file" {
   cat > "$FILTERS_DIR/mytool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_filter() { printf 'filtered\n'; }
 smsm_wrap "$@"
 EOF

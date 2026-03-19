@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/spf13/cobra"
 )
 
 // ---- Config Discovery ----
@@ -87,6 +89,26 @@ func emitSmsmWrap() string {
     unset _smsm_saved_ifs _smsm_entry
     return 127
   fi
+
+  # Check --only-shim / --dont-shim exclusion lists
+  _smsm_skip=0
+  if [ -n "${SHIMSUMM_ONLY_SHIM:-}" ]; then
+    case ":${SHIMSUMM_ONLY_SHIM}:" in
+      *":${_smsm_tool}:"*) ;;
+      *) _smsm_skip=1 ;;
+    esac
+  fi
+  if [ -n "${SHIMSUMM_DONT_SHIM:-}" ]; then
+    case ":${SHIMSUMM_DONT_SHIM}:" in
+      *":${_smsm_tool}:"*) _smsm_skip=1 ;;
+    esac
+  fi
+  if [ "$_smsm_skip" = "1" ]; then
+    unset _smsm_tool _smsm_filters_dir _smsm_found_filters_dir
+    unset _smsm_saved_ifs _smsm_entry _smsm_skip
+    exec "$_smsm_real" "$@"
+  fi
+  unset _smsm_skip
 
   # Create temp file for full unfiltered output with timestamp naming
   mkdir -p /tmp/shimsumm
@@ -249,19 +271,25 @@ func runFilterTest(toolName, filtersDir, testsDir string) (bool, string) {
 
 // ---- Subcommand Handlers ----
 
-func cmdInit(shell string) {
+func cmdInit(shell string, dontShim, onlyShim []string) {
 	filtersDir := getFiltersDir()
 
 	var code string
 	if shell == "fish" {
-		code = fmt.Sprintf(`set -l _smsm_f
+		code = `set -l _smsm_f
 if set -q XDG_CONFIG_HOME
     set _smsm_f "$XDG_CONFIG_HOME/shimsumm/filters"
 else
     set _smsm_f "$HOME/.config/shimsumm/filters"
 end
 contains -- $_smsm_f $PATH; or set -gx PATH $_smsm_f $PATH
-set -e _smsm_f`)
+set -e _smsm_f`
+		if len(dontShim) > 0 {
+			code += fmt.Sprintf("\nset -gx SHIMSUMM_DONT_SHIM %q", strings.Join(dontShim, ":"))
+		}
+		if len(onlyShim) > 0 {
+			code += fmt.Sprintf("\nset -gx SHIMSUMM_ONLY_SHIM %q", strings.Join(onlyShim, ":"))
+		}
 	} else {
 		code = fmt.Sprintf(`_smsm_filters="%s"
 case ":${PATH}:" in
@@ -269,6 +297,12 @@ case ":${PATH}:" in
   *) PATH="${_smsm_filters}:${PATH}"; export PATH ;;
 esac
 unset _smsm_filters`, filtersDir)
+		if len(dontShim) > 0 {
+			code += fmt.Sprintf("\nSHIMSUMM_DONT_SHIM=%q; export SHIMSUMM_DONT_SHIM", strings.Join(dontShim, ":"))
+		}
+		if len(onlyShim) > 0 {
+			code += fmt.Sprintf("\nSHIMSUMM_ONLY_SHIM=%q; export SHIMSUMM_ONLY_SHIM", strings.Join(onlyShim, ":"))
+		}
 	}
 
 	fmt.Println(code)
@@ -359,78 +393,151 @@ func cmdDispatch(tool string, args []string) {
 // ---- Main ----
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+	rootCmd := &cobra.Command{
+		Use:   "shimsumm",
+		Short: "Transparent output filtering for LLM-managed shells",
+		Long:  "Transparent output filtering for LLM-managed shells",
+		// When invoked with no subcommand, print usage and exit 1.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.Help()
+			os.Exit(1)
+			return nil
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
+	rootCmd.SetOut(os.Stdout)
 
-	command := os.Args[1]
-	args := os.Args[2:]
-
-	switch command {
-	case "init":
-		shell := "sh"
-		if len(args) > 0 {
-			shell = args[0]
-			// Validate shell choice
+	// ---- init ----
+	var dontShim, onlyShim []string
+	initCmd := &cobra.Command{
+		Use:   "init [bash|zsh|fish|sh]",
+		Short: "Print shell setup code",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			shell := "sh"
+			if len(args) > 0 {
+				shell = args[0]
+			}
 			validShells := map[string]bool{"bash": true, "zsh": true, "fish": true, "sh": true}
 			if !validShells[shell] {
 				fmt.Fprintf(os.Stderr, "Usage: shimsumm init [bash|zsh|fish|sh]\n")
 				fmt.Fprintf(os.Stderr, "shimsumm: error: invalid choice: '%s' (choose from 'bash', 'zsh', 'fish', 'sh')\n", shell)
 				os.Exit(1)
 			}
+			if len(dontShim) > 0 && len(onlyShim) > 0 {
+				fmt.Fprintf(os.Stderr, "shimsumm: error: --dont-shim and --only-shim are mutually exclusive\n")
+				os.Exit(1)
+			}
+			cmdInit(shell, dontShim, onlyShim)
+			return nil
+		},
+	}
+	initCmd.Flags().StringSliceVar(&dontShim, "dont-shim", nil, "tool to exclude from shimming (repeatable)")
+	initCmd.Flags().StringSliceVar(&onlyShim, "only-shim", nil, "tool to exclusively shim (repeatable)")
+	initCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		msg := err.Error()
+		if strings.Contains(msg, "dont-shim") {
+			fmt.Fprintf(os.Stderr, "shimsumm: error: --dont-shim requires a tool name\n")
+		} else if strings.Contains(msg, "only-shim") {
+			fmt.Fprintf(os.Stderr, "shimsumm: error: --only-shim requires a tool name\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "shimsumm: error: %v\n", err)
 		}
-		cmdInit(shell)
+		os.Exit(1)
+		return nil
+	})
+	rootCmd.AddCommand(initCmd)
 
-	case "wrap":
-		if len(args) > 0 {
-			fmt.Fprintf(os.Stderr, "Usage: shimsumm wrap\n")
-			fmt.Fprintf(os.Stderr, "shimsumm: error: unrecognized arguments: %s\n", strings.Join(args, " "))
-			os.Exit(1)
-		}
-		cmdWrap()
+	// ---- emit-wrap ----
+	emitWrapCmd := &cobra.Command{
+		Use:   "emit-wrap",
+		Short: "Print smsm_wrap function definition",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmdWrap()
+			return nil
+		},
+	}
+	rootCmd.AddCommand(emitWrapCmd)
 
-	case "test":
-		var tool string
-		if len(args) > 0 {
-			tool = args[0]
-		}
-		cmdTest(tool)
+	// ---- test ----
+	testCmd := &cobra.Command{
+		Use:   "test [TOOL]",
+		Short: "Run fixture tests for filter scripts",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tool := ""
+			if len(args) > 0 {
+				tool = args[0]
+			}
+			cmdTest(tool)
+			return nil
+		},
+	}
+	rootCmd.AddCommand(testCmd)
 
-	case "dispatch":
-		if len(args) < 1 {
-			fmt.Fprintf(os.Stderr, "Usage: shimsumm dispatch TOOL [ARGS...]\n")
-			fmt.Fprintf(os.Stderr, "shimsumm: error: the following arguments are required: tool\n")
-			os.Exit(1)
-		}
-		tool := args[0]
-		remainingArgs := args[1:]
-		cmdDispatch(tool, remainingArgs)
+	// ---- dispatch ----
+	dispatchCmd := &cobra.Command{
+		Use:   "dispatch TOOL [ARGS...]",
+		Short: "Dispatch to filter script",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				fmt.Fprintf(os.Stderr, "Usage: shimsumm dispatch TOOL [ARGS...]\n")
+				fmt.Fprintf(os.Stderr, "shimsumm: error: the following arguments are required: tool\n")
+				os.Exit(1)
+			}
+			tool := args[0]
+			remainingArgs := args[1:]
+			cmdDispatch(tool, remainingArgs)
+			return nil
+		},
+	}
+	rootCmd.AddCommand(dispatchCmd)
 
-	default:
-		fmt.Fprintf(os.Stderr, "Usage: shimsumm {init,wrap,test,dispatch} ...\n")
-		fmt.Fprintf(os.Stderr, "shimsumm: error: invalid choice: '%s' (choose from 'init', 'wrap', 'test', 'dispatch')\n", command)
+	// ---- completion ----
+	completionCmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion script",
+		Long: `Generate shell completion script for the specified shell.
+To load completions:
+
+Bash:
+  $ source <(shimsumm completion bash)
+
+Zsh:
+  $ source <(shimsumm completion zsh)
+
+Fish:
+  $ shimsumm completion fish | source
+`,
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return rootCmd.GenBashCompletionV2(os.Stdout, true)
+			case "zsh":
+				return rootCmd.GenZshCompletion(os.Stdout)
+			case "fish":
+				return rootCmd.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell: %s", args[0])
+			}
+		},
+	}
+	rootCmd.AddCommand(completionCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		// Unknown subcommand: cobra prints "unknown command" to stderr.
+		// We need to also match the test expectation of exit 1 and output containing
+		// the bad subcommand name (cobra includes it in the error message).
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func printUsage() {
-	usage := `Usage: shimsumm [-h] {init,wrap,test,dispatch} ...
-
-Transparent output filtering for LLM-managed shells
-
-positional arguments:
-  {init,wrap,test,dispatch}
-                        subcommands
-    init                Print shell setup code
-    wrap                Print smsm_wrap function definition
-    test                Run fixture tests for filter scripts
-    dispatch            Dispatch to filter script
-
-options:
-  -h, --help            show this help message and exit`
-
-	fmt.Println(usage)
 }
 
 // generateUnifiedDiff creates a unified diff output similar to Python's difflib

@@ -11,7 +11,7 @@ setup() {
   # Filter script
   cat > "$FILTERS_DIR/mytool" <<'EOF'
 #!/bin/sh
-eval "$(shimsumm wrap)"
+eval "$(shimsumm emit-wrap)"
 smsm_wrap "$@"
 EOF
   chmod +x "$FILTERS_DIR/mytool"
