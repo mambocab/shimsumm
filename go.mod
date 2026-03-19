@@ -1,4 +1,4 @@
-module github.com/example/shimsumm
+module github.com/mambocab/shimsumm
 
 go 1.26
 
