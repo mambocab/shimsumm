@@ -1102,6 +1102,36 @@ func main() {
 	testCmd := &cobra.Command{
 		Use:   "test [run|add|list|prompt] ...",
 		Short: "Develop and test filter scripts",
+		Long: `Develop and test filter scripts.
+
+Subcommands:
+  run [<filter>]       Run tests (default when no subcommand given)
+  add <filter> <name>  Create a new test case
+  list [<filter>]      List test cases
+  prompt <filter>      Generate a prompt for LLM-assisted filter development
+
+Flags (for list):
+  --all                Include filters with no test cases
+  --json               Output structured JSON
+
+Flags (for add):
+  --from-file <path>   Read input from a file instead of stdin
+  --run <command...>   Run a command and capture its output
+  --args "..."         Record the command args for this test case
+
+Workflow:
+  1. Capture interesting examples of tool output:
+       some-command | shimsumm test add myfilter case1
+       shimsumm test add myfilter case2 --run some-command --flag
+
+  2. For each, an editor opens to define the expected output.
+
+  3. Generate a prompt for your coding agent:
+       shimsumm test prompt myfilter | pbcopy
+
+  4. Give the prompt to your LLM coding tool. It will edit the
+     filter script and run "shimsumm test run myfilter" in a loop
+     until the tests pass.`,
 		// Handle bare "shimsumm test" and "shimsumm test <filter>"
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
