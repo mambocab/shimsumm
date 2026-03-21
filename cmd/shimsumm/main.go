@@ -552,6 +552,17 @@ func cmdTestAdd(filterName, caseName, fromFile, argsFlag string, runCmd []string
 		os.Exit(1)
 	}
 
+	// Check if a filter exists for this name; if not, offer to create one
+	filtersDir := getFiltersDir()
+	filterPath := filepath.Join(filtersDir, filterName)
+	if _, err := os.Stat(filterPath); err != nil {
+		if !confirmPrompt(fmt.Sprintf("No filter %q exists. Create it?", filterName), true) {
+			fmt.Fprintf(os.Stderr, "aborted\n")
+			os.Exit(1)
+		}
+		cmdNewFilter(filterName)
+	}
+
 	// Ensure case directory exists
 	if err := os.MkdirAll(caseDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot create directory: %v\n", err)

@@ -258,8 +258,8 @@ assert notested['cases'] == [], f'got {notested}'
   printf 'input\n' > "$TEST_TMP/source.txt"
   export EDITOR="cp $TEST_TMP/expected_content"
   printf 'expected\n' > "$TEST_TMP/expected_content"
-  # "y" confirms editor prompt (filter creation prompt added in later commit)
-  run bash -c 'echo y | shimsumm test add brandnew case1 --from-file "$1"' _ "$TEST_TMP/source.txt"
+  # Two "y" answers: create filter + open editor
+  run bash -c 'printf "y\ny\n" | shimsumm test add brandnew case1 --from-file "$1"' _ "$TEST_TMP/source.txt"
   assert_success
   [ -d "$TESTS_DIR/brandnew" ]
 }
@@ -287,6 +287,14 @@ EOF
   run bash -c 'echo y | shimsumm test add mytool emptycase --from-file "$1"' _ "$TEST_TMP/source.txt"
   assert_failure
   [ ! -f "$TESTS_DIR/mytool/emptycase.input" ]
+}
+
+@test "test add: prompts to create missing filter" {
+  printf 'input\n' > "$TEST_TMP/source.txt"
+  # Answer "n" to create-filter prompt — should abort
+  run bash -c 'echo n | shimsumm test add noshim case1 --from-file "$1"' _ "$TEST_TMP/source.txt"
+  assert_failure
+  assert_output --partial "aborted"
 }
 
 @test "test add: prompts before opening editor" {
