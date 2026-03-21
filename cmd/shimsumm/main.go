@@ -575,7 +575,16 @@ func cmdTestAdd(filterName, caseName, fromFile, argsFlag string, runCmd []string
 	var createdFiles []string
 
 	if len(runCmd) > 0 {
-		// --run mode: execute command and capture output
+		// --run mode: check if the command name matches the filter name
+		cmdBaseName := filepath.Base(runCmd[0])
+		if cmdBaseName != filterName {
+			if !confirmPrompt(fmt.Sprintf("Command %q doesn't match filter %q. Continue?", cmdBaseName, filterName), false) {
+				fmt.Fprintf(os.Stderr, "aborted\n")
+				os.Exit(1)
+			}
+		}
+
+		// Execute command and capture output
 		cmd := exec.Command(runCmd[0], runCmd[1:]...)
 		var out bytes.Buffer
 		cmd.Stdout = &out

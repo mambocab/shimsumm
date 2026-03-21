@@ -267,14 +267,15 @@ assert notested['cases'] == [], f'got {notested}'
 @test "test add --run: captures command output and exit code" {
   export EDITOR="cp $TEST_TMP/expected_content"
   printf 'expected\n' > "$TEST_TMP/expected_content"
-  cat > "$TEST_TMP/failing-cmd" <<'EOF'
+  # Name the script "mytool" so it matches the filter name (no mismatch prompt)
+  cat > "$TEST_TMP/mytool" <<'EOF'
 #!/bin/sh
 echo "command output"
 exit 1
 EOF
-  chmod +x "$TEST_TMP/failing-cmd"
+  chmod +x "$TEST_TMP/mytool"
   # "y" confirms editor prompt
-  run bash -c 'echo y | shimsumm test add mytool runcmd --run "$1"' _ "$TEST_TMP/failing-cmd"
+  run bash -c 'echo y | shimsumm test add mytool runcmd --run "$1"' _ "$TEST_TMP/mytool"
   assert_success
   [ "$(cat "$TESTS_DIR/mytool/runcmd.input")" = "command output" ]
   [ "$(cat "$TESTS_DIR/mytool/runcmd.exit")" = "1" ]
@@ -306,6 +307,20 @@ EOF
   assert_failure
   assert_output --partial "aborted"
   [ ! -f "$TESTS_DIR/mytool/editortest.expected" ]
+}
+
+@test "test add --run: warns on command/filter name mismatch" {
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected\n' > "$TEST_TMP/expected_content"
+  cat > "$TEST_TMP/othercmd" <<'EOF'
+#!/bin/sh
+echo "output"
+EOF
+  chmod +x "$TEST_TMP/othercmd"
+  # "y" to mismatch prompt + "y" to editor prompt
+  run bash -c 'printf "y\ny\n" | shimsumm test add mytool mismatch --run "$1"' _ "$TEST_TMP/othercmd"
+  assert_success
+  assert_output --partial "doesn't match"
 }
 
 @test "test prompt: emits prompt with filter name" {
