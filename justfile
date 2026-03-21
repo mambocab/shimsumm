@@ -10,5 +10,9 @@ release:
     export GITHUB_TOKEN=$(gh auth token)
     goreleaser release --clean --skip=archive
 
+lint:
+    shellcheck cmd/shimsumm/smsm_wrap.sh
+    go vet ./...
+
 clean:
     rm -rf bin/
