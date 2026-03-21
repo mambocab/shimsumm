@@ -3,7 +3,7 @@ build:
 
 test:
     docker build -t shimsumm-test .
-    docker run --rm shimsumm-test
+    docker run --rm shimsumm-test sh -c "bats /app/tests/ && /app/tests/shells/bash-integration.bash && /app/tests/shells/zsh-integration.zsh && /app/tests/shells/fish-integration.fish"
 
 release:
     #!/usr/bin/env sh
