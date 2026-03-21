@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // ---- getConfigDir tests ----
@@ -179,3 +181,110 @@ func TestParseSkipChecks_AllValidChecks(t *testing.T) {
 
 // Note: diff output is now produced by github.com/pmezard/go-difflib
 // and does not need unit tests here.
+
+// ---- completeFilterNames tests ----
+
+func makeFiltersDir(t *testing.T, files map[string]os.FileMode) string {
+	t.Helper()
+	dir := t.TempDir()
+	filtersDir := filepath.Join(dir, "shimsumm", "filters")
+	if err := os.MkdirAll(filtersDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, mode := range files {
+		path := filepath.Join(filtersDir, name)
+		if mode&os.ModeDir != 0 {
+			if err := os.Mkdir(path, 0755); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := os.WriteFile(path, []byte("#!/bin/sh\n"), mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	return filtersDir
+}
+
+func TestCompleteFilterNames_ReturnsExecutableFilters(t *testing.T) {
+	makeFiltersDir(t, map[string]os.FileMode{
+		"git":    0755,
+		"kubectl": 0755,
+	})
+
+	names, directive := completeFilterNames(nil, nil, "")
+
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %d, want ShellCompDirectiveNoFileComp", directive)
+	}
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if !got["git"] || !got["kubectl"] {
+		t.Errorf("names = %v, want both git and kubectl", names)
+	}
+	if len(names) != 2 {
+		t.Errorf("len(names) = %d, want 2", len(names))
+	}
+}
+
+func TestCompleteFilterNames_ExcludesNonExecutableFiles(t *testing.T) {
+	makeFiltersDir(t, map[string]os.FileMode{
+		"runnable": 0755,
+		"readme":   0644,
+	})
+
+	names, _ := completeFilterNames(nil, nil, "")
+
+	for _, n := range names {
+		if n == "readme" {
+			t.Errorf("non-executable file 'readme' should not appear in completions")
+		}
+	}
+	if len(names) != 1 || names[0] != "runnable" {
+		t.Errorf("names = %v, want [runnable]", names)
+	}
+}
+
+func TestCompleteFilterNames_ExcludesDirectories(t *testing.T) {
+	makeFiltersDir(t, map[string]os.FileMode{
+		"myfilter": 0755,
+		"subdir":   os.ModeDir,
+	})
+
+	names, _ := completeFilterNames(nil, nil, "")
+
+	for _, n := range names {
+		if n == "subdir" {
+			t.Errorf("directory 'subdir' should not appear in completions")
+		}
+	}
+	if len(names) != 1 || names[0] != "myfilter" {
+		t.Errorf("names = %v, want [myfilter]", names)
+	}
+}
+
+func TestCompleteFilterNames_NonexistentDirReturnsNil(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/nonexistent/path/that/does/not/exist")
+
+	names, directive := completeFilterNames(nil, nil, "")
+
+	if names != nil {
+		t.Errorf("names = %v, want nil", names)
+	}
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %d, want ShellCompDirectiveNoFileComp", directive)
+	}
+}
+
+func TestCompleteFilterNames_EmptyDirReturnsEmpty(t *testing.T) {
+	makeFiltersDir(t, map[string]os.FileMode{})
+
+	names, _ := completeFilterNames(nil, nil, "")
+
+	if len(names) != 0 {
+		t.Errorf("names = %v, want empty", names)
+	}
+}
