@@ -284,3 +284,30 @@ EOF
   assert_failure
   [ ! -f "$TESTS_DIR/mytool/emptycase.input" ]
 }
+
+@test "test prompt: emits prompt with filter name" {
+  run shimsumm test prompt mytool
+  assert_success
+  assert_output --partial "mytool"
+  assert_output --partial "smsm_filter"
+  assert_output --partial "smsm_wrap"
+  assert_output --partial "shimsumm test run mytool"
+}
+
+@test "test prompt: includes filter path" {
+  run shimsumm test prompt mytool
+  assert_success
+  assert_output --partial "filters/mytool"
+}
+
+@test "test prompt: mentions existing filter when present" {
+  run shimsumm test prompt mytool
+  assert_success
+  assert_output --partial "Modify"
+}
+
+@test "test prompt: includes skeleton when no filter exists" {
+  run shimsumm test prompt newfilter
+  assert_success
+  assert_output --partial "smsm_filter"
+}

@@ -673,6 +673,61 @@ func cleanupFiles(paths []string) {
 	}
 }
 
+func cmdTestPrompt(filterName string) {
+	filtersDir := getFiltersDir()
+	filterPath := filepath.Join(filtersDir, filterName)
+
+	filterExists := false
+	if stat, err := os.Stat(filterPath); err == nil && (stat.Mode()&0111) != 0 {
+		filterExists = true
+	}
+
+	var b strings.Builder
+
+	b.WriteString("# Task: Write a shimsumm filter for " + filterName + "\n\n")
+
+	b.WriteString("## What is shimsumm?\n\n")
+	b.WriteString("shimsumm is a tool that interposes filter scripts between command-line tools and the user. ")
+	b.WriteString("When a shimmed command runs, shimsumm captures its output and pipes it through a filter script ")
+	b.WriteString("that can transform, summarize, or annotate the output.\n\n")
+
+	b.WriteString("## How filter scripts work\n\n")
+	b.WriteString("A filter script lives at: `" + filterPath + "`\n\n")
+	b.WriteString("The script sources the `smsm_wrap` function, defines a `smsm_filter()` function, ")
+	b.WriteString("and calls `smsm_wrap \"$@\"`. The `smsm_filter()` function reads the raw tool output ")
+	b.WriteString("from stdin and writes the filtered output to stdout.\n\n")
+
+	if filterExists {
+		b.WriteString("**An existing filter is already at this path. Modify it rather than starting from scratch.**\n\n")
+	}
+
+	b.WriteString("## Filter script skeleton\n\n")
+	b.WriteString("```sh\n")
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("eval \"$(shimsumm emit-wrap)\"\n\n")
+	b.WriteString("smsm_filter() {\n")
+	b.WriteString("  # Read raw tool output from stdin\n")
+	b.WriteString("  # Write filtered output to stdout\n")
+	b.WriteString("  cat  # passthrough — replace with your filter logic\n")
+	b.WriteString("}\n\n")
+	b.WriteString("smsm_wrap \"$@\"\n")
+	b.WriteString("```\n\n")
+
+	b.WriteString("## Running tests\n\n")
+	b.WriteString("Run: `shimsumm test run " + filterName + "`\n\n")
+	b.WriteString("Test output shows unified diffs when the filter's actual output doesn't match expected output. ")
+	b.WriteString("Lines prefixed with `-` are expected but missing; lines prefixed with `+` are unexpected. ")
+	b.WriteString("Exit code mismatches are reported separately.\n\n")
+
+	b.WriteString("## Development loop\n\n")
+	b.WriteString("1. Edit the filter script at `" + filterPath + "`\n")
+	b.WriteString("2. Run `shimsumm test run " + filterName + "`\n")
+	b.WriteString("3. Read the test failures (diffs and exit code mismatches)\n")
+	b.WriteString("4. Repeat until all tests pass\n")
+
+	fmt.Print(b.String())
+}
+
 func cmdDispatch(tool string, args []string) {
 	filtersDir := getFiltersDir()
 	filterPath := filepath.Join(filtersDir, tool)
@@ -1136,6 +1191,17 @@ func main() {
 	testAddCmd.Flags().StringVar(&addArgs, "args", "", "record the command args for this test case")
 	testAddCmd.Flags().BoolVar(&addRun, "run", false, "run remaining args as command and capture output")
 	testCmd.AddCommand(testAddCmd)
+
+	testPromptCmd := &cobra.Command{
+		Use:   "prompt <filter>",
+		Short: "Generate a prompt for LLM-assisted filter development",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmdTestPrompt(args[0])
+			return nil
+		},
+	}
+	testCmd.AddCommand(testPromptCmd)
 
 	// ---- dispatch ----
 	dispatchCmd := &cobra.Command{
