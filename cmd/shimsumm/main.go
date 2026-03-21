@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/spf13/cobra"
 )
 
@@ -169,6 +170,16 @@ func runFilterTest(filterName, caseName, filtersDir, testsDir string) (bool, str
 	if outputMatch && exitMatch {
 		return true, fmt.Sprintf("PASS: %s", label)
 	}
+
+	// Generate unified diff
+	diff := difflib.UnifiedDiff{
+		A:        difflib.SplitLines(expected),
+		B:        difflib.SplitLines(actual),
+		FromFile: expectedFile,
+		ToFile:   "actual",
+		Context:  3,
+	}
+	diffOutput, _ := difflib.GetUnifiedDiffString(diff)
 
 	var result strings.Builder
 	fmt.Fprintf(&result, "FAIL: %s\n", label)
@@ -1282,42 +1293,4 @@ Fish:
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-// generateUnifiedDiff creates a unified diff output similar to Python's difflib
-func generateUnifiedDiff(fromFile, toFile string, fromLines, toLines []string) string {
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("--- %s\n", fromFile))
-	result.WriteString(fmt.Sprintf("+++ %s\n", toFile))
-
-	// Generate basic unified diff format with @@ header
-	maxLines := len(fromLines)
-	if len(toLines) > maxLines {
-		maxLines = len(toLines)
-	}
-
-	// Create @@ header (simplified: just show line numbers)
-	fromLineCount := len(fromLines)
-	toLineCount := len(toLines)
-	result.WriteString(fmt.Sprintf("@@ -%d +%d @@\n", 1, 1))
-
-	// Output diff lines
-	for i := 0; i < maxLines; i++ {
-		if i < len(fromLines) && i < len(toLines) {
-			if fromLines[i] != toLines[i] {
-				result.WriteString(fmt.Sprintf("-%s\n", fromLines[i]))
-				result.WriteString(fmt.Sprintf("+%s\n", toLines[i]))
-			} else {
-				result.WriteString(fmt.Sprintf(" %s\n", fromLines[i]))
-			}
-		} else if i < len(fromLines) {
-			result.WriteString(fmt.Sprintf("-%s\n", fromLines[i]))
-		} else {
-			result.WriteString(fmt.Sprintf("+%s\n", toLines[i]))
-		}
-	}
-
-	_ = fromLineCount // For later enhancement if needed
-	_ = toLineCount
-	return result.String()
 }

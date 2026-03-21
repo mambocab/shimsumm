@@ -2,7 +2,10 @@ module github.com/mambocab/shimsumm
 
 go 1.26
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/pmezard/go-difflib v1.0.0
+	github.com/spf13/cobra v1.10.2
+)
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
