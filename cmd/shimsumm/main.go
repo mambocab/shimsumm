@@ -1,7 +1,5 @@
 package main
 
-var version = "dev"
-
 import (
 	"bufio"
 	"bytes"
@@ -20,6 +18,8 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/spf13/cobra"
 )
+
+var version = "dev"
 
 //go:embed smsm_wrap.sh
 var smsmWrapSh string
@@ -184,9 +184,7 @@ func runFilterTest(filterName, caseName, filtersDir, testsDir string) (bool, str
 	var result strings.Builder
 	fmt.Fprintf(&result, "FAIL: %s\n", label)
 	if !outputMatch {
-		expectedSplitLines := strings.Split(expected, "\n")
-		actualSplitLines := strings.Split(actual, "\n")
-		result.WriteString(generateUnifiedDiff(expectedFile, "actual", expectedSplitLines, actualSplitLines))
+		result.WriteString(diffOutput)
 	}
 	if !exitMatch {
 		if expectNonzero {
