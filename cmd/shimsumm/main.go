@@ -521,6 +521,26 @@ func cmdTestList(filterName string, showAll bool, jsonOutput bool) {
 	}
 }
 
+// confirmPrompt prints a question and reads a y/n response from stdin.
+// defaultYes controls what happens when the user presses enter with no input:
+// true means default is Y (shown as [Y/n]), false means default is N (shown as [y/N]).
+func confirmPrompt(question string, defaultYes bool) bool {
+	hint := "[y/N]"
+	if defaultYes {
+		hint = "[Y/n]"
+	}
+	fmt.Fprintf(os.Stderr, "%s %s ", question, hint)
+
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	answer := strings.TrimSpace(strings.ToLower(line))
+
+	if answer == "" {
+		return defaultYes
+	}
+	return answer == "y" || answer == "yes"
+}
+
 func cmdTestAdd(filterName, caseName, fromFile, argsFlag string, runCmd []string) {
 	testsDir := getTestsDir()
 	caseDir := filepath.Join(testsDir, filterName)
@@ -615,6 +635,14 @@ func cmdTestAdd(filterName, caseName, fromFile, argsFlag string, runCmd []string
 			os.Exit(1)
 		}
 		createdFiles = append(createdFiles, exitFilePath)
+	}
+
+	// Confirm before opening the editor. Dropping users straight into an
+	// editor without warning is disorienting, so we always ask first.
+	if !confirmPrompt("Open editor to define expected output?", true) {
+		fmt.Fprintf(os.Stderr, "aborted\n")
+		cleanupFiles(createdFiles)
+		os.Exit(1)
 	}
 
 	// Open editor for expected output

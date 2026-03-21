@@ -229,7 +229,8 @@ assert notested['cases'] == [], f'got {notested}'
   printf 'raw input data\n' > "$TEST_TMP/source.txt"
   export EDITOR="cp $TEST_TMP/expected_content"
   printf 'expected output\n' > "$TEST_TMP/expected_content"
-  run shimsumm test add mytool newcase --from-file "$TEST_TMP/source.txt"
+  # "y" confirms editor prompt
+  run bash -c 'echo y | shimsumm test add mytool newcase --from-file "$1"' _ "$TEST_TMP/source.txt"
   assert_success
   assert_output --partial "Created test: mytool/newcase"
   [ -f "$TESTS_DIR/mytool/newcase.input" ]
@@ -241,7 +242,7 @@ assert notested['cases'] == [], f'got {notested}'
   printf 'input data\n' > "$TEST_TMP/source.txt"
   export EDITOR="cp $TEST_TMP/expected_content"
   printf 'expected\n' > "$TEST_TMP/expected_content"
-  run shimsumm test add mytool argscase --from-file "$TEST_TMP/source.txt" --args "-v --flag"
+  run bash -c 'echo y | shimsumm test add mytool argscase --from-file "$1" --args "-v --flag"' _ "$TEST_TMP/source.txt"
   assert_success
   [ -f "$TESTS_DIR/mytool/argscase.args" ]
   [ "$(cat "$TESTS_DIR/mytool/argscase.args")" = "-v --flag" ]
@@ -257,7 +258,8 @@ assert notested['cases'] == [], f'got {notested}'
   printf 'input\n' > "$TEST_TMP/source.txt"
   export EDITOR="cp $TEST_TMP/expected_content"
   printf 'expected\n' > "$TEST_TMP/expected_content"
-  run shimsumm test add brandnew case1 --from-file "$TEST_TMP/source.txt"
+  # "y" confirms editor prompt (filter creation prompt added in later commit)
+  run bash -c 'echo y | shimsumm test add brandnew case1 --from-file "$1"' _ "$TEST_TMP/source.txt"
   assert_success
   [ -d "$TESTS_DIR/brandnew" ]
 }
@@ -271,7 +273,8 @@ echo "command output"
 exit 1
 EOF
   chmod +x "$TEST_TMP/failing-cmd"
-  run shimsumm test add mytool runcmd --run "$TEST_TMP/failing-cmd"
+  # "y" confirms editor prompt
+  run bash -c 'echo y | shimsumm test add mytool runcmd --run "$1"' _ "$TEST_TMP/failing-cmd"
   assert_success
   [ "$(cat "$TESTS_DIR/mytool/runcmd.input")" = "command output" ]
   [ "$(cat "$TESTS_DIR/mytool/runcmd.exit")" = "1" ]
@@ -280,9 +283,21 @@ EOF
 @test "test add: aborts on empty editor output" {
   printf 'input\n' > "$TEST_TMP/source.txt"
   export EDITOR="cp /dev/null"
-  run shimsumm test add mytool emptycase --from-file "$TEST_TMP/source.txt"
+  # "y" confirms editor prompt, but editor produces empty output
+  run bash -c 'echo y | shimsumm test add mytool emptycase --from-file "$1"' _ "$TEST_TMP/source.txt"
   assert_failure
   [ ! -f "$TESTS_DIR/mytool/emptycase.input" ]
+}
+
+@test "test add: prompts before opening editor" {
+  printf 'input\n' > "$TEST_TMP/source.txt"
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected\n' > "$TEST_TMP/expected_content"
+  # Answer "n" to editor prompt — should abort
+  run bash -c 'echo n | shimsumm test add mytool editortest --from-file "$1"' _ "$TEST_TMP/source.txt"
+  assert_failure
+  assert_output --partial "aborted"
+  [ ! -f "$TESTS_DIR/mytool/editortest.expected" ]
 }
 
 @test "test prompt: emits prompt with filter name" {
