@@ -19,4 +19,4 @@ WORKDIR /app
 COPY --from=builder /app/bin/shimsumm /app/bin/shimsumm
 COPY cmd/shimsumm/smsm_wrap.sh /app/cmd/shimsumm/smsm_wrap.sh
 COPY tests/ /app/tests/
-CMD ["sh", "-c", "set -e; shellcheck /app/cmd/shimsumm/smsm_wrap.sh; bats /app/tests/shimsumm-wrap.bats /app/tests/shimsumm-test.bats /app/tests/shimsumm.bats /app/tests/shimsumm-init-shim.bats /app/tests/shimsumm-doctor.bats /app/tests/shimsumm-new-filter.bats; /app/tests/shells/bash-integration.bash; /app/tests/shells/zsh-integration.zsh; /app/tests/shells/fish-integration.fish"]
+CMD ["sh", "-c", "set -e; shellcheck /app/cmd/shimsumm/smsm_wrap.sh; bats /app/tests/shimsumm-wrap.bats /app/tests/shimsumm-test.bats /app/tests/shimsumm.bats /app/tests/shimsumm-init-shim.bats /app/tests/shimsumm-doctor.bats /app/tests/shimsumm-new-filter.bats /app/tests/shimsumm-completion.bats; /app/tests/shells/bash-integration.bash; /app/tests/shells/zsh-integration.zsh; /app/tests/shells/fish-integration.fish"]

@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 smsm_wrap() {
   # Extract tool name and filters directory from script path.
   # ${0##*/} = basename, ${0%/*} = dirname
