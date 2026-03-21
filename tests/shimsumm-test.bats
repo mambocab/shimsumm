@@ -224,3 +224,63 @@ notested = [f for f in d if f['filter']=='notested'][0]
 assert notested['cases'] == [], f'got {notested}'
 "
 }
+
+@test "test add: creates test case from --from-file" {
+  printf 'raw input data\n' > "$TEST_TMP/source.txt"
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected output\n' > "$TEST_TMP/expected_content"
+  run shimsumm test add mytool newcase --from-file "$TEST_TMP/source.txt"
+  assert_success
+  assert_output --partial "Created test: mytool/newcase"
+  [ -f "$TESTS_DIR/mytool/newcase.input" ]
+  [ -f "$TESTS_DIR/mytool/newcase.expected" ]
+  [ "$(cat "$TESTS_DIR/mytool/newcase.input")" = "raw input data" ]
+}
+
+@test "test add: saves .args when --args provided" {
+  printf 'input data\n' > "$TEST_TMP/source.txt"
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected\n' > "$TEST_TMP/expected_content"
+  run shimsumm test add mytool argscase --from-file "$TEST_TMP/source.txt" --args "-v --flag"
+  assert_success
+  [ -f "$TESTS_DIR/mytool/argscase.args" ]
+  [ "$(cat "$TESTS_DIR/mytool/argscase.args")" = "-v --flag" ]
+}
+
+@test "test add: errors if case already exists" {
+  run shimsumm test add mytool basic
+  assert_failure
+  assert_output --partial "already exists"
+}
+
+@test "test add: creates filter directory if needed" {
+  printf 'input\n' > "$TEST_TMP/source.txt"
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected\n' > "$TEST_TMP/expected_content"
+  run shimsumm test add brandnew case1 --from-file "$TEST_TMP/source.txt"
+  assert_success
+  [ -d "$TESTS_DIR/brandnew" ]
+}
+
+@test "test add --run: captures command output and exit code" {
+  export EDITOR="cp $TEST_TMP/expected_content"
+  printf 'expected\n' > "$TEST_TMP/expected_content"
+  cat > "$TEST_TMP/failing-cmd" <<'EOF'
+#!/bin/sh
+echo "command output"
+exit 1
+EOF
+  chmod +x "$TEST_TMP/failing-cmd"
+  run shimsumm test add mytool runcmd --run "$TEST_TMP/failing-cmd"
+  assert_success
+  [ "$(cat "$TESTS_DIR/mytool/runcmd.input")" = "command output" ]
+  [ "$(cat "$TESTS_DIR/mytool/runcmd.exit")" = "1" ]
+}
+
+@test "test add: aborts on empty editor output" {
+  printf 'input\n' > "$TEST_TMP/source.txt"
+  export EDITOR="cp /dev/null"
+  run shimsumm test add mytool emptycase --from-file "$TEST_TMP/source.txt"
+  assert_failure
+  [ ! -f "$TESTS_DIR/mytool/emptycase.input" ]
+}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -520,6 +521,158 @@ func cmdTestList(filterName string, showAll bool, jsonOutput bool) {
 	}
 }
 
+func cmdTestAdd(filterName, caseName, fromFile, argsFlag string, runCmd []string) {
+	testsDir := getTestsDir()
+	caseDir := filepath.Join(testsDir, filterName)
+	inputFile := filepath.Join(caseDir, caseName+".input")
+
+	// Check if case already exists
+	if _, err := os.Stat(inputFile); err == nil {
+		fmt.Fprintf(os.Stderr, "error: test case already exists: %s/%s\n", filterName, caseName)
+		os.Exit(1)
+	}
+
+	// Ensure case directory exists
+	if err := os.MkdirAll(caseDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot create directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	var inputData []byte
+	var exitCode string
+	var argsValue string
+	var createdFiles []string
+
+	if len(runCmd) > 0 {
+		// --run mode: execute command and capture output
+		cmd := exec.Command(runCmd[0], runCmd[1:]...)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		err := cmd.Run()
+
+		inputData = out.Bytes()
+
+		ec := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				ec = exitErr.ExitCode()
+			}
+		}
+		if ec != 0 {
+			exitCode = strconv.Itoa(ec)
+			fmt.Fprintf(os.Stderr, "note: command exited with code %d\n", ec)
+		}
+
+		// Save argv[1:] as args
+		if len(runCmd) > 1 {
+			argsValue = strings.Join(runCmd[1:], " ")
+		}
+	} else if fromFile != "" {
+		// --from-file mode
+		var err error
+		inputData, err = os.ReadFile(fromFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot read file: %v\n", err)
+			os.Exit(1)
+		}
+		argsValue = argsFlag
+	} else {
+		// stdin mode
+		var err error
+		inputData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot read stdin: %v\n", err)
+			os.Exit(1)
+		}
+		argsValue = argsFlag
+	}
+
+	// Write input file
+	if err := os.WriteFile(inputFile, inputData, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot write input file: %v\n", err)
+		os.Exit(1)
+	}
+	createdFiles = append(createdFiles, inputFile)
+
+	// Write args file if provided
+	if argsValue != "" {
+		argsFilePath := filepath.Join(caseDir, caseName+".args")
+		if err := os.WriteFile(argsFilePath, []byte(argsValue), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot write args file: %v\n", err)
+			cleanupFiles(createdFiles)
+			os.Exit(1)
+		}
+		createdFiles = append(createdFiles, argsFilePath)
+	}
+
+	// Write exit file if non-zero
+	if exitCode != "" {
+		exitFilePath := filepath.Join(caseDir, caseName+".exit")
+		if err := os.WriteFile(exitFilePath, []byte(exitCode), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot write exit file: %v\n", err)
+			cleanupFiles(createdFiles)
+			os.Exit(1)
+		}
+		createdFiles = append(createdFiles, exitFilePath)
+	}
+
+	// Open editor for expected output
+	tmpFile, err := os.CreateTemp("", "shimsumm-expected-*.txt")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot create temp file: %v\n", err)
+		cleanupFiles(createdFiles)
+		os.Exit(1)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	// Pre-populate with input content
+	tmpFile.Write(inputData)
+	tmpFile.Close()
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+
+	editorCmd := exec.Command("sh", "-c", editor+" "+tmpPath)
+	editorCmd.Stdin = os.Stdin
+	editorCmd.Stdout = os.Stdout
+	editorCmd.Stderr = os.Stderr
+	if err := editorCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: editor failed\n")
+		cleanupFiles(createdFiles)
+		os.Exit(1)
+	}
+
+	// Read editor output
+	expectedData, err := os.ReadFile(tmpPath)
+	if err != nil || len(strings.TrimSpace(string(expectedData))) == 0 {
+		fmt.Fprintf(os.Stderr, "error: expected output is empty, aborting\n")
+		cleanupFiles(createdFiles)
+		os.Exit(1)
+	}
+
+	// Write expected file
+	expectedFile := filepath.Join(caseDir, caseName+".expected")
+	if err := os.WriteFile(expectedFile, expectedData, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot write expected file: %v\n", err)
+		cleanupFiles(createdFiles)
+		os.Exit(1)
+	}
+
+	inputLines := strings.Count(strings.TrimRight(string(inputData), "\n"), "\n") + 1
+	expectedLines := strings.Count(strings.TrimRight(string(expectedData), "\n"), "\n") + 1
+	fmt.Printf("Created test: %s/%s (input: %d lines, expected: %d lines)\n", filterName, caseName, inputLines, expectedLines)
+}
+
+func cleanupFiles(paths []string) {
+	for _, p := range paths {
+		os.Remove(p)
+	}
+}
+
 func cmdDispatch(tool string, args []string) {
 	filtersDir := getFiltersDir()
 	filterPath := filepath.Join(filtersDir, tool)
@@ -946,6 +1099,43 @@ func main() {
 	testListCmd.Flags().BoolVar(&listAll, "all", false, "include filters with no test cases")
 	testListCmd.Flags().BoolVar(&listJSON, "json", false, "output structured JSON")
 	testCmd.AddCommand(testListCmd)
+
+	var addFromFile, addArgs string
+	var addRun bool
+	testAddCmd := &cobra.Command{
+		Use:                "add <filter> <case> [flags]",
+		Short:              "Create a new test case",
+		Args:               cobra.ArbitraryArgs,
+		DisableFlagParsing: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return fmt.Errorf("requires at least 2 args: <filter> <case>")
+			}
+			filterName := args[0]
+			caseName := args[1]
+
+			var runCmd []string
+			if addRun {
+				if addFromFile != "" {
+					return fmt.Errorf("--run and --from-file are mutually exclusive")
+				}
+				if addArgs != "" {
+					return fmt.Errorf("--run and --args are mutually exclusive")
+				}
+				runCmd = args[2:]
+				if len(runCmd) == 0 {
+					return fmt.Errorf("--run requires a command")
+				}
+			}
+
+			cmdTestAdd(filterName, caseName, addFromFile, addArgs, runCmd)
+			return nil
+		},
+	}
+	testAddCmd.Flags().StringVar(&addFromFile, "from-file", "", "read input from a file instead of stdin")
+	testAddCmd.Flags().StringVar(&addArgs, "args", "", "record the command args for this test case")
+	testAddCmd.Flags().BoolVar(&addRun, "run", false, "run remaining args as command and capture output")
+	testCmd.AddCommand(testAddCmd)
 
 	// ---- dispatch ----
 	dispatchCmd := &cobra.Command{
