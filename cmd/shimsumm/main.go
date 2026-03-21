@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -149,53 +150,74 @@ func emitSmsmWrap() string {
 
 // ---- Test Runner ----
 
-func runFilterTest(toolName, filtersDir, testsDir string) (bool, string) {
-	filterPath := filepath.Join(filtersDir, toolName)
-	inputFile := filepath.Join(testsDir, toolName+".input")
-	expectedFile := filepath.Join(testsDir, toolName+".expected")
+func runFilterTest(filterName, caseName, filtersDir, testsDir string) (bool, string) {
+	label := filterName + "/" + caseName
+	filterPath := filepath.Join(filtersDir, filterName)
+	caseDir := filepath.Join(testsDir, filterName)
+	inputFile := filepath.Join(caseDir, caseName+".input")
+	expectedFile := filepath.Join(caseDir, caseName+".expected")
+	exitFile := filepath.Join(caseDir, caseName+".exit")
+	argsFile := filepath.Join(caseDir, caseName+".args")
 
 	// Check if filter exists and is executable
 	stat, err := os.Stat(filterPath)
 	if err != nil || (stat.Mode()&0111) == 0 {
-		return false, fmt.Sprintf("FAIL: %s\nFilter not found or not executable", toolName)
-	}
-
-	// Check if fixtures exist
-	if _, err := os.Stat(inputFile); err != nil {
-		return false, fmt.Sprintf("FAIL: %s\nno fixtures", toolName)
-	}
-	if _, err := os.Stat(expectedFile); err != nil {
-		return false, fmt.Sprintf("FAIL: %s\nno fixtures", toolName)
+		return false, fmt.Sprintf("FAIL: %s\nFilter not found or not executable", label)
 	}
 
 	// Read expected output
 	expectedBytes, err := os.ReadFile(expectedFile)
 	if err != nil {
-		return false, fmt.Sprintf("FAIL: %s\n%v", toolName, err)
+		return false, fmt.Sprintf("FAIL: %s\n%v", label, err)
 	}
 	expected := strings.TrimRight(string(expectedBytes), "\n")
 
-	// Create a temporary directory with a mock tool that outputs the input fixture
+	// Read expected exit code
+	expectedExitCode := 0
+	expectNonzero := false
+	if exitBytes, err := os.ReadFile(exitFile); err == nil {
+		exitStr := strings.TrimSpace(string(exitBytes))
+		if exitStr == "nonzero" {
+			expectNonzero = true
+		} else {
+			n, err := strconv.Atoi(exitStr)
+			if err != nil {
+				return false, fmt.Sprintf("FAIL: %s\nInvalid exit code in %s: %s", label, exitFile, exitStr)
+			}
+			expectedExitCode = n
+		}
+	}
+
+	// Read args
+	var filterArgs []string
+	if argsBytes, err := os.ReadFile(argsFile); err == nil {
+		argsStr := strings.TrimSpace(string(argsBytes))
+		if argsStr != "" {
+			filterArgs = strings.Fields(argsStr)
+		}
+	}
+
+	// Determine mock exit code
+	mockExitCode := expectedExitCode
+	if expectNonzero {
+		mockExitCode = 1
+	}
+
+	// Create mock binary
 	mockDir, err := os.MkdirTemp("", "shimsumm-test-")
 	if err != nil {
-		return false, fmt.Sprintf("FAIL: %s\n%v", toolName, err)
+		return false, fmt.Sprintf("FAIL: %s\n%v", label, err)
 	}
 	defer os.RemoveAll(mockDir)
 
-	// Create mock tool that outputs the fixture input
-	mockTool := filepath.Join(mockDir, toolName)
-	inputBytes, err := os.ReadFile(inputFile)
-	if err != nil {
-		return false, fmt.Sprintf("FAIL: %s\n%v", toolName, err)
-	}
-	mockScript := fmt.Sprintf("#!/bin/sh\ncat %q\nexit 0\n", inputFile)
+	mockTool := filepath.Join(mockDir, filterName)
+	mockScript := fmt.Sprintf("#!/bin/sh\ncat %q\nexit %d\n", inputFile, mockExitCode)
 	if err := os.WriteFile(mockTool, []byte(mockScript), 0755); err != nil {
-		return false, fmt.Sprintf("FAIL: %s\n%v", toolName, err)
+		return false, fmt.Sprintf("FAIL: %s\n%v", label, err)
 	}
-	_ = inputBytes // Ensure we read it
 
 	// Execute filter with mock tool in PATH
-	cmd := exec.Command(filterPath)
+	cmd := exec.Command(filterPath, filterArgs...)
 	pathEnv := fmt.Sprintf("%s:%s:%s", filtersDir, mockDir, os.Getenv("PATH"))
 	cmd.Env = append(os.Environ(), fmt.Sprintf("PATH=%s", pathEnv))
 
@@ -204,9 +226,16 @@ func runFilterTest(toolName, filtersDir, testsDir string) (bool, string) {
 	cmd.Stderr = &stderr
 
 	cmdErr := cmd.Run()
-	_ = cmdErr // We'll check the output regardless
 
-	// Filter out [full output:...] lines from actual output
+	// Get actual exit code
+	actualExitCode := 0
+	if cmdErr != nil {
+		if exitErr, ok := cmdErr.(*exec.ExitError); ok {
+			actualExitCode = exitErr.ExitCode()
+		}
+	}
+
+	// Filter out [full output:...] lines
 	actualLines := []string{}
 	scanner := bufio.NewScanner(strings.NewReader(stdout.String()))
 	for scanner.Scan() {
@@ -217,16 +246,34 @@ func runFilterTest(toolName, filtersDir, testsDir string) (bool, string) {
 	}
 	actual := strings.TrimRight(strings.Join(actualLines, "\n"), "\n")
 
-	if actual == expected {
-		return true, fmt.Sprintf("PASS: %s", toolName)
+	// Check results
+	outputMatch := actual == expected
+	var exitMatch bool
+	if expectNonzero {
+		exitMatch = actualExitCode != 0
+	} else {
+		exitMatch = actualExitCode == expectedExitCode
 	}
 
-	// Generate unified diff
-	expectedLines := strings.Split(expected, "\n")
-	actualLines = strings.Split(actual, "\n")
-	diffOutput := generateUnifiedDiff(expectedFile, "actual", expectedLines, actualLines)
+	if outputMatch && exitMatch {
+		return true, fmt.Sprintf("PASS: %s", label)
+	}
 
-	return false, fmt.Sprintf("FAIL: %s\n%s", toolName, diffOutput)
+	var result strings.Builder
+	fmt.Fprintf(&result, "FAIL: %s\n", label)
+	if !outputMatch {
+		expectedSplitLines := strings.Split(expected, "\n")
+		actualSplitLines := strings.Split(actual, "\n")
+		result.WriteString(generateUnifiedDiff(expectedFile, "actual", expectedSplitLines, actualSplitLines))
+	}
+	if !exitMatch {
+		if expectNonzero {
+			fmt.Fprintf(&result, "expected nonzero exit code, got 0\n")
+		} else {
+			fmt.Fprintf(&result, "expected exit code %d, got %d\n", expectedExitCode, actualExitCode)
+		}
+	}
+	return false, result.String()
 }
 
 // ---- Subcommand Handlers ----
@@ -272,62 +319,89 @@ func cmdWrap() {
 	fmt.Println(emitSmsmWrap())
 }
 
-func cmdTest(tool string) {
+type testCase struct {
+	filter string
+	name   string
+}
+
+func discoverTestCases(testsDir, filterName string) ([]testCase, []string) {
+	var cases []testCase
+	var warnings []string
+
+	var filterDirs []string
+	if filterName != "" {
+		filterDirs = []string{filterName}
+	} else {
+		entries, err := os.ReadDir(testsDir)
+		if err != nil {
+			return nil, nil
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				filterDirs = append(filterDirs, e.Name())
+			}
+		}
+		sort.Strings(filterDirs)
+	}
+
+	for _, f := range filterDirs {
+		caseDir := filepath.Join(testsDir, f)
+		entries, err := os.ReadDir(caseDir)
+		if err != nil {
+			continue
+		}
+
+		var caseNames []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".input") {
+				caseName := strings.TrimSuffix(e.Name(), ".input")
+				expectedFile := filepath.Join(caseDir, caseName+".expected")
+				if _, err := os.Stat(expectedFile); err == nil {
+					caseNames = append(caseNames, caseName)
+				} else {
+					warnings = append(warnings, fmt.Sprintf("warning: %s/%s.input has no matching .expected file, skipping", f, caseName))
+				}
+			}
+		}
+		sort.Strings(caseNames)
+		for _, c := range caseNames {
+			cases = append(cases, testCase{filter: f, name: c})
+		}
+	}
+
+	return cases, warnings
+}
+
+func cmdTestRun(filterName string) {
 	filtersDir := getFiltersDir()
 	testsDir := getTestsDir()
 
-	// Check if tests directory exists
 	if _, err := os.Stat(testsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "No tests directory: %s\n", testsDir)
 		os.Exit(1)
 	}
 
-	if tool != "" {
-		// Check if filter exists first
-		filterPath := filepath.Join(filtersDir, tool)
-		stat, err := os.Stat(filterPath)
-		if err != nil || (stat.Mode()&0111) == 0 {
-			os.Exit(127)
-		}
+	cases, warnings := discoverTestCases(testsDir, filterName)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
-		passed, output := runFilterTest(tool, filtersDir, testsDir)
+	if len(cases) == 0 {
+		fmt.Fprintf(os.Stderr, "no test cases found\n")
+		os.Exit(1)
+	}
+
+	allPassed := true
+	for _, tc := range cases {
+		passed, output := runFilterTest(tc.filter, tc.name, filtersDir, testsDir)
 		fmt.Println(output)
 		if !passed {
-			os.Exit(1)
+			allPassed = false
 		}
-	} else {
-		// Run all tests
-		entries, err := os.ReadDir(testsDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading tests directory: %v\n", err)
-			os.Exit(1)
-		}
+	}
 
-		var toolNames []string
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".input") {
-				toolName := strings.TrimSuffix(entry.Name(), ".input")
-				expectedFile := filepath.Join(testsDir, toolName+".expected")
-				if _, err := os.Stat(expectedFile); err == nil {
-					toolNames = append(toolNames, toolName)
-				}
-			}
-		}
-
-		sort.Strings(toolNames)
-
-		allPassed := true
-		for _, toolName := range toolNames {
-			passed, output := runFilterTest(toolName, filtersDir, testsDir)
-			fmt.Println(output)
-			if !passed {
-				allPassed = false
-			}
-		}
-
-		if !allPassed {
-			os.Exit(1)
-		}
+	if !allPassed {
+		os.Exit(1)
 	}
 }
 
@@ -703,19 +777,42 @@ func main() {
 
 	// ---- test ----
 	testCmd := &cobra.Command{
-		Use:   "test [TOOL]",
-		Short: "Run fixture tests for filter scripts",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "test [run|add|list|prompt] ...",
+		Short: "Develop and test filter scripts",
+		// Handle bare "shimsumm test" and "shimsumm test <filter>"
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tool := ""
-			if len(args) > 0 {
-				tool = args[0]
+			if len(args) == 0 {
+				cmdTestRun("")
+			} else {
+				// Check if first arg is a known filter
+				filtersDir := getFiltersDir()
+				filterPath := filepath.Join(filtersDir, args[0])
+				if stat, err := os.Stat(filterPath); err == nil && (stat.Mode()&0111) != 0 {
+					cmdTestRun(args[0])
+				} else {
+					return fmt.Errorf("unknown command %q for \"shimsumm test\"", args[0])
+				}
 			}
-			cmdTest(tool)
 			return nil
 		},
 	}
 	rootCmd.AddCommand(testCmd)
+
+	testRunCmd := &cobra.Command{
+		Use:   "run [<filter>]",
+		Short: "Run tests (default when no subcommand given)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filter := ""
+			if len(args) > 0 {
+				filter = args[0]
+			}
+			cmdTestRun(filter)
+			return nil
+		},
+	}
+	testCmd.AddCommand(testRunCmd)
 
 	// ---- dispatch ----
 	dispatchCmd := &cobra.Command{
