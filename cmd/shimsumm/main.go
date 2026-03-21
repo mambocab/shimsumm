@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -402,6 +403,120 @@ func cmdTestRun(filterName string) {
 
 	if !allPassed {
 		os.Exit(1)
+	}
+}
+
+func cmdTestList(filterName string, showAll bool, jsonOutput bool) {
+	filtersDir := getFiltersDir()
+	testsDir := getTestsDir()
+
+	type listCase struct {
+		Name string `json:"name"`
+		Args bool   `json:"args,omitempty"`
+		Exit string `json:"exit,omitempty"`
+	}
+	type listFilter struct {
+		Filter string     `json:"filter"`
+		Cases  []listCase `json:"cases"`
+	}
+
+	var filters []listFilter
+
+	var filterDirs []string
+	if filterName != "" {
+		filterDirs = []string{filterName}
+	} else {
+		if entries, err := os.ReadDir(testsDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					filterDirs = append(filterDirs, e.Name())
+				}
+			}
+		}
+		sort.Strings(filterDirs)
+	}
+
+	testedFilters := map[string]bool{}
+	for _, f := range filterDirs {
+		testedFilters[f] = true
+		caseDir := filepath.Join(testsDir, f)
+		entries, err := os.ReadDir(caseDir)
+		if err != nil {
+			continue
+		}
+
+		var cases []listCase
+		var caseNames []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".input") {
+				cn := strings.TrimSuffix(e.Name(), ".input")
+				expectedFile := filepath.Join(caseDir, cn+".expected")
+				if _, err := os.Stat(expectedFile); err == nil {
+					caseNames = append(caseNames, cn)
+				}
+			}
+		}
+		sort.Strings(caseNames)
+
+		for _, cn := range caseNames {
+			lc := listCase{Name: cn}
+			if _, err := os.Stat(filepath.Join(caseDir, cn+".args")); err == nil {
+				lc.Args = true
+			}
+			if exitBytes, err := os.ReadFile(filepath.Join(caseDir, cn+".exit")); err == nil {
+				lc.Exit = strings.TrimSpace(string(exitBytes))
+			}
+			cases = append(cases, lc)
+		}
+		filters = append(filters, listFilter{Filter: f, Cases: cases})
+	}
+
+	// For --all or --json, include untested filters
+	if showAll || jsonOutput {
+		if entries, err := os.ReadDir(filtersDir); err == nil {
+			var untested []string
+			for _, e := range entries {
+				if !e.IsDir() && !testedFilters[e.Name()] {
+					untested = append(untested, e.Name())
+				}
+			}
+			sort.Strings(untested)
+			for _, f := range untested {
+				filters = append(filters, listFilter{Filter: f, Cases: []listCase{}})
+			}
+		}
+	}
+
+	if jsonOutput {
+		data, _ := json.Marshal(filters)
+		fmt.Println(string(data))
+		return
+	}
+
+	// Human-readable output
+	for i, f := range filters {
+		if len(f.Cases) == 0 {
+			fmt.Printf("%s (no tests)\n", f.Filter)
+		} else {
+			fmt.Println(f.Filter)
+			for _, c := range f.Cases {
+				annotations := []string{}
+				if c.Args {
+					annotations = append(annotations, "args")
+				}
+				if c.Exit != "" {
+					annotations = append(annotations, "exit: "+c.Exit)
+				}
+				if len(annotations) > 0 {
+					fmt.Printf("  %s (%s)\n", c.Name, strings.Join(annotations, ", "))
+				} else {
+					fmt.Printf("  %s\n", c.Name)
+				}
+			}
+		}
+		if i < len(filters)-1 {
+			fmt.Println()
+		}
 	}
 }
 
@@ -813,6 +928,24 @@ func main() {
 		},
 	}
 	testCmd.AddCommand(testRunCmd)
+
+	var listAll, listJSON bool
+	testListCmd := &cobra.Command{
+		Use:   "list [<filter>]",
+		Short: "List test cases",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filter := ""
+			if len(args) > 0 {
+				filter = args[0]
+			}
+			cmdTestList(filter, listAll, listJSON)
+			return nil
+		},
+	}
+	testListCmd.Flags().BoolVar(&listAll, "all", false, "include filters with no test cases")
+	testListCmd.Flags().BoolVar(&listJSON, "json", false, "output structured JSON")
+	testCmd.AddCommand(testListCmd)
 
 	// ---- dispatch ----
 	dispatchCmd := &cobra.Command{

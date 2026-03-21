@@ -150,3 +150,77 @@ FILTEREOF
   assert_success
   assert_output --partial "PASS: mytool/basic"
 }
+
+@test "test list: shows filters with cases" {
+  run shimsumm test list
+  assert_success
+  assert_output --partial "mytool"
+  assert_output --partial "basic"
+}
+
+@test "test list: shows annotations for args and exit" {
+  printf -- '-v' > "$TESTS_DIR/mytool/basic.args"
+  printf '1' > "$TESTS_DIR/mytool/basic.exit"
+  run shimsumm test list
+  assert_success
+  assert_output --partial "(args, exit: 1)"
+}
+
+@test "test list: filter argument limits output" {
+  mkdir -p "$TESTS_DIR/othertool"
+  printf 'x\n' > "$TESTS_DIR/othertool/case1.input"
+  printf 'x\n' > "$TESTS_DIR/othertool/case1.expected"
+  run shimsumm test list mytool
+  assert_success
+  assert_output --partial "mytool"
+  refute_output --partial "othertool"
+}
+
+@test "test list --all: includes filters with no tests" {
+  cat > "$FILTERS_DIR/notested" <<'FILTEREOF'
+#!/bin/sh
+eval "$(shimsumm emit-wrap)"
+smsm_wrap "$@"
+FILTEREOF
+  chmod +x "$FILTERS_DIR/notested"
+  run shimsumm test list --all
+  assert_success
+  assert_output --partial "notested (no tests)"
+}
+
+@test "test list --json: emits JSON" {
+  run shimsumm test list --json
+  assert_success
+  # Should be valid JSON with filter and cases
+  echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); assert any(f['filter']=='mytool' for f in d)"
+}
+
+@test "test list --json: includes exit field when .exit exists" {
+  printf '1' > "$TESTS_DIR/mytool/basic.exit"
+  run shimsumm test list --json
+  assert_success
+  echo "$output" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+mytool = [f for f in d if f['filter']=='mytool'][0]
+case = [c for c in mytool['cases'] if c['name']=='basic'][0]
+assert case['exit'] == '1', f'got {case}'
+"
+}
+
+@test "test list --json: includes untested filters" {
+  cat > "$FILTERS_DIR/notested" <<'FILTEREOF'
+#!/bin/sh
+eval "$(shimsumm emit-wrap)"
+smsm_wrap "$@"
+FILTEREOF
+  chmod +x "$FILTERS_DIR/notested"
+  run shimsumm test list --json
+  assert_success
+  echo "$output" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+notested = [f for f in d if f['filter']=='notested'][0]
+assert notested['cases'] == [], f'got {notested}'
+"
+}
