@@ -196,6 +196,25 @@ func runFilterTest(filterName, caseName, filtersDir, testsDir string) (bool, str
 	return false, result.String()
 }
 
+// ---- Completion Helpers ----
+
+func completeFilterNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	entries, err := os.ReadDir(getFiltersDir())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.Mode()&0111 != 0 {
+			names = append(names, e.Name())
+		}
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
 // ---- Subcommand Handlers ----
 
 func cmdInit(shell string, dontShim, onlyShim []string) {
@@ -1067,7 +1086,7 @@ func main() {
 	// ---- test ----
 	testCmd := &cobra.Command{
 		GroupID: "user",
-		Use:     "test [run|add|list|prompt] ...",
+		Use:     "test [command]",
 		Short:   "Develop and test filter scripts",
 		Long: `Develop and test filter scripts.
 
@@ -1099,21 +1118,9 @@ Workflow:
   4. Give the prompt to your LLM coding tool. It will edit the
      filter script and run "shimsumm test run myfilter" in a loop
      until the tests pass.`,
-		// Handle bare "shimsumm test" and "shimsumm test <filter>"
-		Args: cobra.ArbitraryArgs,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				cmdTestRun("")
-			} else {
-				// Check if first arg is a known filter
-				filtersDir := getFiltersDir()
-				filterPath := filepath.Join(filtersDir, args[0])
-				if stat, err := os.Stat(filterPath); err == nil && (stat.Mode()&0111) != 0 {
-					cmdTestRun(args[0])
-				} else {
-					return fmt.Errorf("unknown command %q for \"shimsumm test\"", args[0])
-				}
-			}
+			cmdTestRun("")
 			return nil
 		},
 	}
@@ -1131,14 +1138,16 @@ Workflow:
 			cmdTestRun(filter)
 			return nil
 		},
+		ValidArgsFunction: completeFilterNames,
 	}
 	testCmd.AddCommand(testRunCmd)
 
 	var listAll, listJSON bool
 	testListCmd := &cobra.Command{
-		Use:   "list [<filter>]",
-		Short: "List test cases",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "list [<filter>]",
+		Short:             "List test cases",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeFilterNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filter := ""
 			if len(args) > 0 {
@@ -1159,6 +1168,12 @@ Workflow:
 		Short:              "Create a new test case",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: false,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return completeFilterNames(cmd, args, toComplete)
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 2 {
 				return fmt.Errorf("requires at least 2 args: <filter> <case>")
@@ -1190,9 +1205,10 @@ Workflow:
 	testCmd.AddCommand(testAddCmd)
 
 	testPromptCmd := &cobra.Command{
-		Use:   "prompt <filter>",
-		Short: "Generate a prompt for LLM-assisted filter development",
-		Args:  cobra.ExactArgs(1),
+		Use:               "prompt <filter>",
+		Short:             "Generate a prompt for LLM-assisted filter development",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeFilterNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmdTestPrompt(args[0])
 			return nil
@@ -1204,8 +1220,14 @@ Workflow:
 	dispatchCmd := &cobra.Command{
 		GroupID: "internal",
 		Use:     "dispatch TOOL [ARGS...]",
-		Short: "Dispatch to filter script",
-		Args:  cobra.ArbitraryArgs,
+		Short:   "Dispatch to filter script",
+		Args:    cobra.ArbitraryArgs,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return completeFilterNames(cmd, args, toComplete)
+			}
+			return nil, cobra.ShellCompDirectiveDefault
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				fmt.Fprintf(os.Stderr, "Usage: shimsumm dispatch TOOL [ARGS...]\n")

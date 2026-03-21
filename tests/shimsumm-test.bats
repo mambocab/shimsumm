@@ -145,12 +145,6 @@ FILTEREOF
   assert_output --partial "PASS: mytool/basic"
 }
 
-@test "'shimsumm test <filter>' routes to test run" {
-  run shimsumm test mytool
-  assert_success
-  assert_output --partial "PASS: mytool/basic"
-}
-
 @test "test list: shows filters with cases" {
   run shimsumm test list
   assert_success
