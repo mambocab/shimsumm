@@ -6,7 +6,7 @@ setup() {
   SAVED_PATH="$PATH"
   FILTERS_DIR="$TEST_TMP/filters"
   REAL_BIN="$TEST_TMP/real"
-  mkdir -p "$FILTERS_DIR" "$REAL_BIN" /tmp/shimsumm
+  mkdir -p "$FILTERS_DIR" "$REAL_BIN"
 
   # Default passthrough filter script
   cat > "$FILTERS_DIR/mytool" <<'EOF'
@@ -81,9 +81,9 @@ EOF
 
 @test "smsm_wrap appends annotation with temp file path" {
   run "$FILTERS_DIR/mytool"
-  assert_output --partial "[full output: /tmp/shimsumm/mytool-"
-  # annotation must include a timestamp segment (YYYYmmddHHMMSS = 14 digits)
-  run sh -c 'printf "%s\n" "$1" | grep -qE "\\[full output: /tmp/shimsumm/mytool-[0-9]{14}-[0-9]"' \
+  assert_output --partial "[full output:"
+  # annotation must include a mktemp-style suffix (tool.XXXXXX)
+  run sh -c 'printf "%s\n" "$1" | grep -qE "\\[full output: .*/mytool\\.[A-Za-z0-9]{6}\\]"' \
     _ "$output"
   assert_success
 }

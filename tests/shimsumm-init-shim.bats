@@ -6,7 +6,7 @@ setup() {
   export XDG_CONFIG_HOME="$TEST_TMP/config"
   FILTERS_DIR="$XDG_CONFIG_HOME/shimsumm/filters"
   REAL_BIN="$TEST_TMP/real"
-  mkdir -p "$FILTERS_DIR" "$REAL_BIN" /tmp/shimsumm
+  mkdir -p "$FILTERS_DIR" "$REAL_BIN"
 
   # Filter script that uppercases output
   cat > "$FILTERS_DIR/mytool" <<'EOF'
